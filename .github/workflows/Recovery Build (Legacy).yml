@@ -119,6 +119,15 @@ jobs:
         sudo ln -s /usr/bin/python2 /usr/bin/python
       continue-on-error: true
 
+    - name: Fix AVB Partition Size Error
+      run: |
+        echo "BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1073741824" >> ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
+        echo "BOARD_VENDORIMAGE_PARTITION_SIZE := 1073741824" >> ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      continue-on-error: true
+
+
+
     - name: Building recovery
       run: |
         source build/envsetup.sh
