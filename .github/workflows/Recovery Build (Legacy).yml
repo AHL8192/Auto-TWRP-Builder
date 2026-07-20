@@ -101,10 +101,15 @@ jobs:
 
     - name: Sync Device Dependencies
       run: |
-        bash ${GITHUB_WORKSPACE}/scripts/convert.sh ${{ steps.gdt.outputs.DEVICE_PATH }}/${{ steps.buildtree.outputs.value }}.dependencies
-        repo sync -j$(nproc --all)
+        DEP_FILE=$(find device -name "*.dependencies" | head -n 1)
+        if [ -n "$DEP_FILE" ]; then
+          bash ${GITHUB_WORKSPACE}/scripts/convert.sh "$DEP_FILE"
+          repo sync -j$(nproc --all)
+        else
+          echo "No dependencies file found, skipping..."
+        fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      continue-on-error: true
+
 
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
@@ -145,9 +150,9 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: | 
-          workspace/out/target/product/${{ steps.gdt.outputs.DEVICE_NAME }}/${{ github.event.inputs.BUILD_TARGET }}.img
-          workspace/out/target/product/${{ steps.gdt.outputs.DEVICE_NAME }}/*.zip
-          workspace/out/target/product/${{ steps.gdt.outputs.DEVICE_NAME }}/*vendor*.img
+          workspace/out/target/product/*/${{ github.event.inputs.BUILD_TARGET }}.img
+          workspace/out/target/product/*/*.zip
+          workspace/out/target/product/*/*vendor*.img
         name: ${{ steps.gdt.outputs.DEVICE_NAME }}-${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
