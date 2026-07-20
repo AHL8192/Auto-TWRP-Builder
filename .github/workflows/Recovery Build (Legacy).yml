@@ -121,8 +121,12 @@ jobs:
 
     - name: Fix AVB Partition Size Error
       run: |
+        # Add dummy sizes for missing system/vendor partitions
         echo "BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1073741824" >> ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
         echo "BOARD_VENDORIMAGE_PARTITION_SIZE := 1073741824" >> ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
+        
+        # Search for the unaligned 33554416 size and replace it with the perfectly aligned 32MB size (33554432)
+        sed -i 's/33554416/33554432/g' ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
       continue-on-error: true
 
