@@ -1,20 +1,32 @@
-name: Recovery Build (Legacy)
+name: Build TWRP from Custom Tree
 
 on:
   workflow_dispatch:
     inputs:
-      IMG_URL:
-        description: 'IMG_ URL'
+      DEVICE_TREE_URL:
+        description: 'Device Tree Repo URL'
         required: true
-        default: 'https://github.com/KoCleo/Auto-Twrp-Builder/raw/master/recovery.img'
+        default: 'https://github.com/AHL8192/device_gplus_Q10'
+      DEVICE_PATH:
+        description: 'Device Tree Path (e.g., device/gplus/Q10)'
+        required: true
+        default: 'device/gplus/Q10'
+      MAKEFILE_NAME:
+        description: 'Makefile Name'
+        required: true
+        default: 'omni_Q10'
+      DEVICE_NAME:
+        description: 'Device Name'
+        required: true
+        default: 'Q10'
       MANIFEST_URL:
-        description: 'MANIFEST_URL (if want to use SSH keys, use git@github.com:XXXXX)'
+        description: 'MANIFEST_URL'
         required: true
         default: 'https://github.com/minimal-manifest-twrp/platform_manifest_twrp_omni'
       MANIFEST_BRANCH:
         description: 'MANIFEST_BRANCH'
         required: true
-        default: 'twrp-8.1'
+        default: 'twrp-9.0'
       BUILD_TARGET:
         description: 'BUILD_TARGET'
         required: true
@@ -30,9 +42,10 @@ jobs:
     - name: Display Run Parameters
       run: |
         echo "::group::User Environment Variables"
-        echo "Manifest URL: ${{ github.event.inputs.MANIFEST_URL }}"
-        echo "Manifest Branch: ${{ github.event.inputs.MANIFEST_BRANCH }}"
-        echo "Build Target: ${{ github.event.inputs.BUILD_TARGET }}.img"
+        echo "Manifest URL: ${{ inputs.MANIFEST_URL }}"
+        echo "Manifest Branch: ${{ inputs.MANIFEST_BRANCH }}"
+        echo "Device Tree: ${{ inputs.DEVICE_TREE_URL }}"
+        echo "Build Target: ${{ inputs.BUILD_TARGET }}.img"
         echo "::endgroup::"
 
     - name: Check Out
@@ -46,8 +59,6 @@ jobs:
         sudo apt-get update
         sudo apt-get -y upgrade
         sudo apt-get -y install gperf gcc-multilib gcc-10-multilib g++-multilib g++-10-multilib libc6-dev lib32ncurses5-dev x11proto-core-dev libx11-dev tree lib32z-dev libgl1-mesa-dev libxml2-utils xsltproc bc ccache lib32readline-dev lib32z1-dev liblz4-tool libncurses5-dev libsdl1.2-dev libwxgtk3.0-gtk3-dev libxml2 lzop pngcrush schedtool squashfs-tools imagemagick libbz2-dev lzma ncftp qemu-user-static libstdc++-10-dev libncurses5 python3 python3-pip cpio wget
-        # Use --break-system-packages to bypass pip restrictions on modern Ubuntu
-        pip3 install twrpdtgen || pip3 install twrpdtgen --break-system-packages
 
     - name: Install OpenJDK
       uses: actions/setup-java@v4
@@ -56,7 +67,7 @@ jobs:
         java-version: '8'
 
     - name: Setup SSH Keys
-      if: ${{ startsWith(github.event.inputs.MANIFEST_URL, 'git@github.com') }}
+      if: ${{ startsWith(inputs.MANIFEST_URL, 'git@github.com') }}
       uses: webfactory/ssh-agent@v0.9.0
       with:
           ssh-private-key: |
@@ -74,34 +85,24 @@ jobs:
         mkdir workspace
         cd workspace
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
-        git config --global user.name "azwhikaru"
-        git config --global user.email "azwhikaru+37921907@github.com"
-        repo init --depth=1 -u ${{ github.event.inputs.MANIFEST_URL }} -b ${{ github.event.inputs.MANIFEST_BRANCH }}
+        git config --global user.name "AHL8192"
+        git config --global user.email "actions@github.com"
+        repo init --depth=1 -u ${{ inputs.MANIFEST_URL }} -b ${{ inputs.MANIFEST_BRANCH }}
       id: pwd
-
-    - name: Check Build Tree
-      uses: haya14busa/action-cond@v1
-      id: buildtree
-      with:
-        cond: ${{ github.event.inputs.MANIFEST_BRANCH == 'twrp-11' || github.event.inputs.MANIFEST_BRANCH == 'twrp-12.1' }}
-        if_true: twrp
-        if_false: omni
 
     - name: Repo Sync
       run: |
         repo sync -j$(nproc --all) --force-sync
       working-directory: workspace
       
-    - name: Generate Device Tree
+    - name: Clone Custom Device Tree
       run: |
-        wget ${{ github.event.inputs.IMG_URL }}
-        python3 ${GITHUB_WORKSPACE}/scripts/build.py -i *.img -o device
+        git clone ${{ inputs.DEVICE_TREE_URL }} ${{ inputs.DEVICE_PATH }}
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      id: gdt
 
     - name: Sync Device Dependencies
       run: |
-        DEP_FILE=$(find device -name "*.dependencies" | head -n 1)
+        DEP_FILE=$(find ${{ inputs.DEVICE_PATH }} -name "*.dependencies" | head -n 1)
         if [ -n "$DEP_FILE" ]; then
           bash ${GITHUB_WORKSPACE}/scripts/convert.sh "$DEP_FILE"
           repo sync -j$(nproc --all)
@@ -109,7 +110,7 @@ jobs:
           echo "No dependencies file found, skipping..."
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-
+      continue-on-error: true
 
     - name: Set Swap Space
       uses: pierotofy/set-swap-space@master
@@ -118,46 +119,32 @@ jobs:
 
     - name: Switch to Python2
       run: |
-        # In Ubuntu 22.04, 'python' is removed, we must explicitly install 'python2'
         sudo apt-get -y install python2
         sudo rm -f /usr/bin/python
         sudo ln -s /usr/bin/python2 /usr/bin/python
       continue-on-error: true
 
-    - name: Fix AVB Partition Size Error
-      run: |
-        # Add dummy sizes for missing system/vendor partitions
-        echo "BOARD_SYSTEMIMAGE_PARTITION_SIZE := 1073741824" >> ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
-        echo "BOARD_VENDORIMAGE_PARTITION_SIZE := 1073741824" >> ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
-        
-        # Search for the unaligned 33554416 size and replace it with the perfectly aligned 32MB size (33554432)
-        sed -i 's/33554416/33554432/g' ${{ steps.gdt.outputs.DEVICE_PATH }}/BoardConfig.mk
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      continue-on-error: true
-
-
-
     - name: Building recovery
       run: |
         source build/envsetup.sh
         export ALLOW_MISSING_DEPENDENCIES=true
-        lunch ${{ steps.gdt.outputs.MAKEFILE_NAME }}-eng
+        lunch ${{ inputs.MAKEFILE_NAME }}-eng
         make clean
-        make ${{ github.event.inputs.BUILD_TARGET }}image -j$(nproc --all)
+        make ${{ inputs.BUILD_TARGET }}image -j$(nproc --all)
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Upload to Release
       uses: softprops/action-gh-release@v2
       with:
         files: | 
-          workspace/out/target/product/*/${{ github.event.inputs.BUILD_TARGET }}.img
+          workspace/out/target/product/*/${{ inputs.BUILD_TARGET }}.img
           workspace/out/target/product/*/*.zip
           workspace/out/target/product/*/*vendor*.img
-        name: ${{ steps.gdt.outputs.DEVICE_NAME }}-${{ github.run_id }}
+        name: ${{ inputs.DEVICE_NAME }}-${{ github.run_id }}
         tag_name: ${{ github.run_id }}
         body: |
-          Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
-          Device: ${{ steps.gdt.outputs.DEVICE_NAME }}
-          Target: ${{ github.event.inputs.BUILD_TARGET }}.img
+          Manifest: ${{ inputs.MANIFEST_BRANCH }}
+          Device: ${{ inputs.DEVICE_NAME }}
+          Target: ${{ inputs.BUILD_TARGET }}.img
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
